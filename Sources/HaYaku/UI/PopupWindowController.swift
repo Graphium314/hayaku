@@ -96,6 +96,7 @@ final class PopupWindow: NSWindow {
         hasShadow = true
         level = .floating
         collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
+        isMovableByWindowBackground = true
     }
 
     override var canBecomeKey: Bool {
