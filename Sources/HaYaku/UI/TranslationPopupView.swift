@@ -9,6 +9,7 @@ enum TranslationPopupState {
 
 struct TranslationPopupView: View {
     @ObservedObject var viewModel: PopupViewModel
+    @State private var didCopy = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
@@ -39,19 +40,26 @@ struct TranslationPopupView: View {
 
                     VStack(spacing: 8) {
                         Button {
-                            NSPasteboard.general.clearContents()
-                            NSPasteboard.general.setString(translation, forType: .string)
-                        } label: {
-                            Image(systemName: "doc.on.doc")
-                        }
-                        .help("訳文をコピー")
-
-                        Button {
                             viewModel.onClose()
                         } label: {
                             Image(systemName: "xmark")
                         }
                         .help("閉じる")
+
+                        Button {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(translation, forType: .string)
+                            didCopy = true
+                            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                                didCopy = false
+                            }
+                        } label: {
+                            Image(systemName: didCopy ? "checkmark" : "doc.on.doc")
+                                .foregroundStyle(didCopy ? Color.green : Color.primary)
+                                .frame(width: 16, height: 16)
+                                .animation(.easeInOut(duration: 0.15), value: didCopy)
+                        }
+                        .help(didCopy ? "コピーしました" : "訳文をコピー")
                     }
                     .buttonStyle(.borderless)
                 }
