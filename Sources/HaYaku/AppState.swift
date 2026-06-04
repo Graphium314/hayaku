@@ -3,8 +3,7 @@ import Foundation
 
 @MainActor
 final class AppState: ObservableObject {
-    @Published var apiKey: String
-    @Published var model: String
+    @Published var config: AppConfig
     @Published var isTranslating = false
     @Published var translationResult = ""
     @Published var errorMessage: String?
@@ -17,9 +16,35 @@ final class AppState: ObservableObject {
     private var didConfigure = false
 
     init() {
-        let config = (try? configStore.load()) ?? AppConfig.default
-        apiKey = config.openaiApiKey
-        model = config.model
+        config = (try? configStore.load()) ?? AppConfig.default
+    }
+
+    // MARK: - Convenience accessors for SettingsView bindings
+
+    var activeProvider: ProviderKind {
+        get { config.activeProvider }
+        set { config.activeProvider = newValue }
+    }
+
+    var currentProviderConfig: ProviderConfig {
+        get { providerConfig(for: config.activeProvider) }
+        set { setProviderConfig(newValue, for: config.activeProvider) }
+    }
+
+    func providerConfig(for kind: ProviderKind) -> ProviderConfig {
+        switch kind {
+        case .openai: config.openai
+        case .openrouter: config.openrouter
+        case .custom: config.custom
+        }
+    }
+
+    func setProviderConfig(_ value: ProviderConfig, for kind: ProviderKind) {
+        switch kind {
+        case .openai: config.openai = value
+        case .openrouter: config.openrouter = value
+        case .custom: config.custom = value
+        }
     }
 
     func configureIfNeeded() {
@@ -32,14 +57,16 @@ final class AppState: ObservableObject {
             }
         }
 
-        if apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+        if config.openai.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+           config.openrouter.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty &&
+           config.custom.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             openSettingsWindow()
         }
     }
 
     func saveConfig() {
         do {
-            try configStore.save(AppConfig(openaiApiKey: apiKey, model: model))
+            try configStore.save(config)
             errorMessage = nil
         } catch {
             errorMessage = "設定の保存に失敗しました: \(error.localizedDescription)"
@@ -54,12 +81,7 @@ final class AppState: ObservableObject {
     func translateSelectedText() async {
         guard !isTranslating else { return }
 
-        let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedAPIKey.isEmpty else {
-            showError("OpenAI APIキーを設定してください。")
-            openSettingsWindow()
-            return
-        }
+        guard let (baseURL, apiKey, model) = resolveActiveProvider() else { return }
 
         if !SelectionCapture.isAccessibilityTrusted(prompt: true) {
             showError("アクセシビリティ権限が必要です。設定画面を開き、「権限をリセット」→ システム設定でチェックを入れてアプリを再起動してください。")
@@ -80,7 +102,7 @@ final class AppState: ObservableObject {
             popupWindowController.showLoading()
             showPopup = true
 
-            let stream = openAIClient.translateStream(selectedText, apiKey: trimmedAPIKey, model: model)
+            let stream = openAIClient.translateStream(selectedText, baseURL: baseURL, apiKey: apiKey, model: model)
             var accumulated = ""
             var receivedFirst = false
             for try await delta in stream {
@@ -93,7 +115,7 @@ final class AppState: ObservableObject {
             }
 
             if !receivedFirst {
-                throw OpenAIError.unknown("Empty translation")
+                throw TranslationError.unknown("Empty translation")
             }
 
             translationResult = accumulated
@@ -111,11 +133,7 @@ final class AppState: ObservableObject {
     }
 
     private func translateText(_ text: String) async {
-        let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedAPIKey.isEmpty else {
-            errorMessage = "OpenAI APIキーを設定してください。"
-            return
-        }
+        guard let (baseURL, apiKey, model) = resolveActiveProvider() else { return }
 
         isTranslating = true
         errorMessage = nil
@@ -123,7 +141,7 @@ final class AppState: ObservableObject {
         do {
             popupWindowController.showLoading()
 
-            let stream = openAIClient.translateStream(text, apiKey: trimmedAPIKey, model: model)
+            let stream = openAIClient.translateStream(text, baseURL: baseURL, apiKey: apiKey, model: model)
             var accumulated = ""
             var receivedFirst = false
             for try await delta in stream {
@@ -136,7 +154,7 @@ final class AppState: ObservableObject {
             }
 
             if !receivedFirst {
-                throw OpenAIError.unknown("Empty translation")
+                throw TranslationError.unknown("Empty translation")
             }
 
             translationResult = accumulated
@@ -145,6 +163,42 @@ final class AppState: ObservableObject {
         }
 
         isTranslating = false
+    }
+
+    // アクティブプロバイダーの (baseURL, apiKey, model) を解決して返す
+    // 問題があれば errorMessage をセットして nil を返す
+    private func resolveActiveProvider() -> (baseURL: URL, apiKey: String, model: String)? {
+        let kind = config.activeProvider
+        let provConfig = providerConfig(for: kind)
+        let trimmedKey = provConfig.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        guard !trimmedKey.isEmpty else {
+            showError("\(kind.displayName) の APIキーを設定してください。")
+            openSettingsWindow()
+            return nil
+        }
+
+        let baseURL: URL
+        if kind == .custom {
+            let trimmedURL = provConfig.baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmedURL.isEmpty, let url = URL(string: trimmedURL) else {
+                showError("カスタムプロバイダーの Base URL を設定してください。")
+                openSettingsWindow()
+                return nil
+            }
+            baseURL = url
+        } else {
+            baseURL = kind.baseURL!
+        }
+
+        let trimmedModel = provConfig.model.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedModel.isEmpty else {
+            showError("モデルを設定してください。")
+            openSettingsWindow()
+            return nil
+        }
+
+        return (baseURL, trimmedKey, trimmedModel)
     }
 
     private func showError(_ message: String) {
@@ -158,8 +212,8 @@ final class AppState: ObservableObject {
             return appError.localizedDescription
         }
 
-        if let openAIError = error as? OpenAIError {
-            return openAIError.localizedDescription
+        if let translationError = error as? TranslationError {
+            return translationError.localizedDescription
         }
 
         return error.localizedDescription

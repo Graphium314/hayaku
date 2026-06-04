@@ -18,12 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
 
         appState.configureIfNeeded()
-
-        if appState.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                self.appState.openSettingsWindow()
-            }
-        }
     }
 
     @objc private func showMenu() {

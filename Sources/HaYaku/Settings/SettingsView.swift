@@ -6,18 +6,41 @@ struct SettingsView: View {
     @EnvironmentObject private var appState: AppState
     @State private var revealAPIKey = false
     @State private var accessibilityTrusted = SelectionCapture.isAccessibilityTrusted(prompt: false)
+    @State private var customModelInput = ""
 
-    private let models = ["gpt-5.4-mini", "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"]
+    private let openAIModels = ["gpt-5.4-mini", "gpt-4o-mini", "gpt-4o", "gpt-4.1-mini"]
+    private let openRouterPresets = [
+        "openai/gpt-4o-mini",
+        "anthropic/claude-sonnet-4-5",
+        "google/gemini-2.0-flash-exp:free",
+        "meta-llama/llama-3.3-70b-instruct"
+    ]
 
     var body: some View {
         Form {
+            // プロバイダー選択
+            Section {
+                Picker("プロバイダー", selection: Binding(
+                    get: { appState.activeProvider },
+                    set: { appState.activeProvider = $0 }
+                )) {
+                    ForEach(ProviderKind.allCases, id: \.self) { kind in
+                        Text(kind.displayName).tag(kind)
+                    }
+                }
+                .pickerStyle(.segmented)
+            } header: {
+                Text("プロバイダー")
+            }
+
+            // APIキー
             Section {
                 HStack {
                     Group {
                         if revealAPIKey {
-                            TextField("sk-...", text: $appState.apiKey)
+                            TextField("APIキー", text: apiKeyBinding)
                         } else {
-                            SecureField("sk-...", text: $appState.apiKey)
+                            SecureField("APIキー", text: apiKeyBinding)
                         }
                     }
                     .textFieldStyle(.roundedBorder)
@@ -31,21 +54,55 @@ struct SettingsView: View {
                     .help(revealAPIKey ? "APIキーを隠す" : "APIキーを表示")
                 }
 
-                Picker("モデル", selection: $appState.model) {
-                    ForEach(models, id: \.self) { model in
-                        Text(model).tag(model)
-                    }
+                if appState.activeProvider == .openrouter {
+                    Text("OpenRouter のキーは openrouter.ai/keys で取得できます。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             } header: {
-                Text("OpenAI")
+                Text("APIキー")
             }
 
+            // モデル
+            Section {
+                switch appState.activeProvider {
+                case .openai:
+                    Picker("モデル", selection: modelBinding) {
+                        ForEach(openAIModels, id: \.self) { model in
+                            Text(model).tag(model)
+                        }
+                    }
+
+                case .openrouter:
+                    Picker("プリセット", selection: modelBinding) {
+                        ForEach(openRouterPresets, id: \.self) { model in
+                            Text(model).tag(model)
+                        }
+                        Text("カスタム入力").tag("__custom__")
+                    }
+                    if !openRouterPresets.contains(modelBinding.wrappedValue) {
+                        TextField("モデルID (例: openai/gpt-4o)", text: modelBinding)
+                            .textFieldStyle(.roundedBorder)
+                    }
+
+                case .custom:
+                    TextField("Base URL (例: http://localhost:8080/v1)", text: baseURLBinding)
+                        .textFieldStyle(.roundedBorder)
+                    TextField("モデルID", text: modelBinding)
+                        .textFieldStyle(.roundedBorder)
+                }
+            } header: {
+                Text("モデル")
+            }
+
+            // ショートカット
             Section {
                 KeyboardShortcuts.Recorder("翻訳", name: .translate)
             } header: {
                 Text("ショートカット")
             }
 
+            // アクセシビリティ権限
             Section {
                 HStack {
                     Image(systemName: accessibilityTrusted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
@@ -111,6 +168,39 @@ struct SettingsView: View {
             accessibilityTrusted = SelectionCapture.isAccessibilityTrusted(prompt: false)
         }
     }
+
+    // MARK: - Bindings
+
+    private var apiKeyBinding: Binding<String> {
+        Binding(
+            get: { appState.providerConfig(for: appState.activeProvider).apiKey },
+            set: {
+                var c = appState.providerConfig(for: appState.activeProvider)
+                c.apiKey = $0
+                appState.setProviderConfig(c, for: appState.activeProvider)
+            }
+        )
+    }
+
+    private var modelBinding: Binding<String> {
+        Binding(
+            get: { appState.providerConfig(for: appState.activeProvider).model },
+            set: {
+                var c = appState.providerConfig(for: appState.activeProvider)
+                c.model = $0
+                appState.setProviderConfig(c, for: appState.activeProvider)
+            }
+        )
+    }
+
+    private var baseURLBinding: Binding<String> {
+        Binding(
+            get: { appState.config.custom.baseURL },
+            set: { appState.config.custom.baseURL = $0 }
+        )
+    }
+
+    // MARK: - Actions
 
     private func openAccessibilitySettings() {
         guard let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") else {

@@ -34,16 +34,13 @@ struct OpenAIClient {
         self.session = session
     }
 
-    func translateStream(_ text: String, apiKey: String, model: String) -> AsyncThrowingStream<String, Error> {
+    func translateStream(_ text: String, baseURL: URL, apiKey: String, model: String) -> AsyncThrowingStream<String, Error> {
         AsyncThrowingStream { continuation in
             Task {
                 do {
-                    guard let url = URL(string: "https://api.openai.com/v1/chat/completions") else {
-                        continuation.finish(throwing: OpenAIError.unknown("Invalid API URL"))
-                        return
-                    }
+                    let endpointURL = baseURL.appendingPathComponent("chat/completions")
 
-                    var request = URLRequest(url: url)
+                    var request = URLRequest(url: endpointURL)
                     request.httpMethod = "POST"
                     request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
                     request.setValue("application/json", forHTTPHeaderField: "Content-Type")
@@ -63,23 +60,23 @@ struct OpenAIClient {
                     let (bytes, response) = try await session.bytes(for: request)
 
                     guard let httpResponse = response as? HTTPURLResponse else {
-                        continuation.finish(throwing: OpenAIError.unknown("Invalid response"))
+                        continuation.finish(throwing: TranslationError.unknown("Invalid response"))
                         return
                     }
 
                     if httpResponse.statusCode == 401 || httpResponse.statusCode == 403 {
-                        continuation.finish(throwing: OpenAIError.invalidKey)
+                        continuation.finish(throwing: TranslationError.invalidKey)
                         return
                     }
                     if httpResponse.statusCode == 429 {
-                        continuation.finish(throwing: OpenAIError.rateLimited)
+                        continuation.finish(throwing: TranslationError.rateLimited)
                         return
                     }
                     if !(200..<300).contains(httpResponse.statusCode) {
                         var data = Data()
                         for try await byte in bytes { data.append(byte) }
                         let apiError = try? JSONDecoder().decode(APIErrorResponse.self, from: data)
-                        continuation.finish(throwing: OpenAIError.unknown(
+                        continuation.finish(throwing: TranslationError.unknown(
                             apiError?.error.message ?? "HTTP \(httpResponse.statusCode)"
                         ))
                         return
@@ -97,17 +94,17 @@ struct OpenAIClient {
                     }
 
                     continuation.finish()
-                } catch let error as OpenAIError {
+                } catch let error as TranslationError {
                     continuation.finish(throwing: error)
                 } catch {
-                    continuation.finish(throwing: OpenAIError.networkError(error.localizedDescription))
+                    continuation.finish(throwing: TranslationError.networkError(error.localizedDescription))
                 }
             }
         }
     }
 }
 
-enum OpenAIError: LocalizedError {
+enum TranslationError: LocalizedError {
     case invalidKey
     case rateLimited
     case networkError(String)
@@ -116,9 +113,9 @@ enum OpenAIError: LocalizedError {
     var errorDescription: String? {
         switch self {
         case .invalidKey:
-            "OpenAI APIキーが無効です。"
+            "APIキーが無効です。"
         case .rateLimited:
-            "OpenAI APIのレート制限に達しました。"
+            "APIのレート制限に達しました。"
         case .networkError(let message):
             "ネットワークエラー: \(message)"
         case .unknown(let message):
@@ -126,6 +123,9 @@ enum OpenAIError: LocalizedError {
         }
     }
 }
+
+// 後方互換のための型エイリアス
+typealias OpenAIError = TranslationError
 
 private struct ChatCompletionRequest: Encodable {
     let model: String

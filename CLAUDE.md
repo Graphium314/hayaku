@@ -2,7 +2,7 @@
 
 ## プロジェクト概要
 
-macOS メニューバー常駐の翻訳アプリ。グローバルショートカット（デフォルト ⌘⇧T）で選択テキストを OpenAI API で翻訳し、ポップアップにストリーミング表示する。Swift Package Manager の executable ターゲットを `.app` バンドルに手動でパッケージングしている。
+macOS メニューバー常駐の翻訳アプリ。グローバルショートカット（デフォルト ⌘⇧T）で選択テキストを OpenAI 互換 API で翻訳し、ポップアップにストリーミング表示する。OpenAI / OpenRouter / カスタムエンドポイントを設定画面で切り替え可能。Swift Package Manager の executable ターゲットを `.app` バンドルに手動でパッケージングしている。
 
 - **言語**: Swift 5.9+、macOS 13+
 - **依存**: `KeyboardShortcuts`（sindresorhus）のみ
@@ -54,11 +54,11 @@ Sources/HaYaku/
 ├── Clipboard/
 │   └── SelectionCapture.swift          # ★ テキスト取得（最重要・複雑）
 ├── Translation/
-│   └── OpenAIClient.swift              # Chat Completions API ストリーミング呼び出し
+│   └── OpenAIClient.swift              # Chat Completions API ストリーミング呼び出し（baseURL を引数で受け取る）
 ├── Hotkey/
 │   └── HotkeyManager.swift             # KeyboardShortcuts ライブラリでグローバル HK 登録
 ├── Settings/
-│   ├── ConfigStore.swift               # ~/Library/Application Support/HaYaku/config.json
+│   ├── ConfigStore.swift               # ~/Library/Application Support/HaYaku/config.json（ProviderKind + ProviderConfig × 3）
 │   ├── SettingsView.swift              # SwiftUI 設定画面
 │   └── SettingsWindowController.swift  # NSWindowController で SettingsView をホスト
 └── UI/
@@ -71,12 +71,15 @@ Sources/HaYaku/
 ## 翻訳フロー（AppState.translateSelectedText）
 
 1. アクセシビリティ権限チェック
-2. `SelectionCapture.captureWithDiagnostics()` でテキスト取得（後述）
-3. `popupWindowController.showLoading()` でローディング表示
-4. `OpenAIClient.translateStream(_:apiKey:model:)` で SSE ストリーミング開始
-5. 初回 delta 受信時に `popupWindowController.startStreaming(original:)` でポップアップを結果表示モードに切り替え
-6. 以降の delta を `popupWindowController.appendDelta(_:)` で逐次追記
-7. ストリーム完了後 `translationResult` に蓄積値を保存
+2. `resolveActiveProvider()` でアクティブプロバイダーの `(baseURL, apiKey, model)` を解決
+3. `SelectionCapture.captureWithDiagnostics()` でテキスト取得（後述）
+4. `popupWindowController.showLoading()` でローディング表示
+5. `OpenAIClient.translateStream(_:baseURL:apiKey:model:)` で SSE ストリーミング開始
+6. 初回 delta 受信時に `popupWindowController.startStreaming(original:)` でポップアップを結果表示モードに切り替え
+7. 以降の delta を `popupWindowController.appendDelta(_:)` で逐次追記
+8. ストリーム完了後 `translationResult` に蓄積値を保存
+
+**プロバイダー解決**: `ProviderKind.openai` → `https://api.openai.com/v1`、`openrouter` → `https://openrouter.ai/api/v1`、`custom` → `AppConfig.custom.baseURL`（空の場合はエラー）。
 
 **重要**: ポップアップ（`showLoading` 含む）はテキスト取得**後**に表示する。取得前に表示するとウィンドウがフォーカスを奪い、Cmd+C フォールバックが HaYaku 自身に飛ぶ。
 
